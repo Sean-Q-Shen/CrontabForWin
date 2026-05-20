@@ -101,3 +101,8 @@ _注意：此时也可以使用 `pm2` 等进程守护工具后台运行此服务
 - 提供了专属的“日志查询面板”，可深层追溯每一个任务的启动时间、耗时记录，以及完整的终端标准输出与错误报错 (stdout/stderr)。
 
 **现代化交互与体验**：采用深色极简风格 (Dark Theme) 布局，提供一键启用/停用、无缝编辑、手动立即执行等便捷交互，配合主页面的实时全局流日志，让任务的运行状态一目了然。
+
+## CronWin首页
+<div align="center">
+<img width="800" height="475" alt="GHBanner" src="https://github.com/Sean-Q-Shen/CrontabForWin/blob/main/images/ConWin_Home.png" />
+</div>
