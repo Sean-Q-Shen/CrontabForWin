@@ -1,9 +1,9 @@
 # CronWin - Windows 任务计划管理器
 
-CronWin 是一个基于 Web 的任务调度管理工具，带有美观的「高密度」UI 界面，支持定时执行各种脚本（Python, Shell, Node 等），像 Linux 下的 `crontab` 一样方便，同时提供执行日志以及状态监控。
+CronWin (Contab for Windows) 是一个在Windows上基于 Web 的任务调度管理工具，支持定时执行各种脚本（Python, Shell, Node 等），像 Linux 下的 `crontab` 添加配置，同时提供执行日志以及状态监控。
 
 ## 适用环境
-- 操作系统：Windows (如 Windows 11), Linux, macOS
+- 操作系统：Windows (如 Windows 11)
 - 必须安装：[Node.js](https://nodejs.org/) (推荐 v18 或更高版本)
 - 可选环境：
   - 如果要运行 Python 任务：需在系统安装 Python 并将其加入环境变量 (PATH)。
