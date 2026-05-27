@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { CronGenerator } from './components/CronGenerator';
 
 export default function App() {
   const [search, setSearch] = useState('');
@@ -37,6 +38,101 @@ export default function App() {
   const [settings, setSettings] = useState<any>({ shPath: '', pythonPath: '', encoding: 'utf8' });
   const [historyTask, setHistoryTask] = useState<any>(null);
   const [taskLogs, setTaskLogs] = useState<any[]>([]);
+
+  const [cronMode, setCronMode] = useState<'visual' | 'raw'>('visual');
+  const [cronValue, setCronValue] = useState('1 8 * * 1,3,5');
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleExportTasks = () => {
+    try {
+      const exportedData = tasks.map(t => ({
+        name: t.name,
+        cron: t.cron,
+        script: t.script,
+        type: t.type || 'shell',
+        enabled: t.enabled !== false,
+        timeout: t.timeout !== undefined ? t.timeout : 0,
+        retryCount: t.retryCount !== undefined ? t.retryCount : 1,
+        cwd: t.cwd || '',
+        envVars: t.envVars || ''
+      }));
+
+      const dataStr = JSON.stringify(exportedData, null, 2);
+      const blob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `cronwin-tasks-${new Date().toISOString().substring(0, 10)}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      alert('导出失败: ' + e.message);
+    }
+  };
+
+  const handleImportTasksClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleImportFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const file = files[0];
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const text = event.target?.result as string;
+        const parsed = JSON.parse(text);
+        if (!Array.isArray(parsed)) {
+          alert('导入失败: JSON 格式错误，必须为定时任务列表数组！');
+          return;
+        }
+
+        // Validate basic fields
+        for (const item of parsed) {
+          if (!item.name || !item.script) {
+            alert('导入失败: 每一个任务必须包含 "name"(名称) 和 "script"(执行命令) 字段。');
+            return;
+          }
+        }
+
+        const res = await fetch('/api/tasks/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(parsed)
+        });
+
+        if (res.ok) {
+          const result = await res.json();
+          alert(`成功导入 ${result.count} 个任务！`);
+          fetchTasks(); // Refresh list
+        } else {
+          const errText = await res.text();
+          alert('导入失败: ' + errText);
+        }
+      } catch (err: any) {
+        alert('解析 JSON 失败: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const openTaskModal = (task: any = null) => {
+    setEditTask(task);
+    if (task) {
+      setCronValue(task.cron || '1 8 * * 1,3,5');
+      setCronMode('visual');
+    } else {
+      setCronValue('1 8 * * 1,3,5');
+      setCronMode('visual');
+    }
+    setShowModal(true);
+  };
 
   const fetchSettings = async () => {
     try {
@@ -84,6 +180,8 @@ export default function App() {
       enabled: formData.get('enabled') === 'on',
       timeout: parseInt(formData.get('timeout') as string || '0', 10),
       retryCount: parseInt(formData.get('retryCount') as string || '1', 10),
+      cwd: formData.get('cwd') as string || '',
+      envVars: formData.get('envVars') as string || '',
     };
 
     try {
@@ -190,7 +288,7 @@ export default function App() {
         {/* Sidebar */}
         <div className="w-60 bg-[#15171e] border-r border-[#2d303a] flex flex-col shrink-0 hidden md:flex">
           <div className="p-4">
-            <button onClick={() => { setEditTask(null); setShowModal(true); }} className="w-full bg-[#0078d4] hover:bg-[#1085e0] text-white py-2 rounded text-sm font-medium flex items-center justify-center gap-2">
+            <button onClick={() => openTaskModal(null)} className="w-full bg-[#0078d4] hover:bg-[#1085e0] text-white py-2 rounded text-sm font-medium flex items-center justify-center gap-2">
               <span className="text-lg leading-none">+</span> 新建定时任务
             </button>
           </div>
@@ -237,8 +335,21 @@ export default function App() {
                   onChange={(e) => setSearch(e.target.value)}
                   className="bg-[#1c1e26] border border-[#2d303a] rounded px-3 py-1 outline-none text-xs focus:border-blue-500 w-48 text-zinc-300"
                 />
-                <button onClick={fetchTasks} className="bg-[#2d303a] px-3 py-1 rounded text-xs text-white hover:bg-[#3d414f]">刷新</button>
-                <button onClick={() => { setEditTask(null); setShowModal(true); }} className="md:hidden bg-[#0078d4] px-3 py-1 rounded text-xs text-white">新建</button>
+                <button onClick={fetchTasks} className="bg-[#2d303a] px-3 py-1 rounded text-xs text-white hover:bg-[#3d414f] transition-colors">刷新</button>
+                <button onClick={handleExportTasks} className="bg-[#1c1e26] border border-[#2d303a] px-3 py-1 rounded text-xs text-[#e0e0e0] hover:bg-[#2d303a] hover:text-white transition-all flex items-center gap-1 select-none">
+                  <span>📥</span> 导出任务
+                </button>
+                <button onClick={handleImportTasksClick} className="bg-[#1c1e26] border border-[#2d303a] px-3 py-1 rounded text-xs text-[#e0e0e0] hover:bg-[#2d303a] hover:text-white transition-all flex items-center gap-1 select-none">
+                  <span>📤</span> 导入任务
+                </button>
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleImportFileChange}
+                  accept=".json"
+                  className="hidden"
+                />
+                <button onClick={() => openTaskModal(null)} className="md:hidden bg-[#0078d4] px-3 py-1 rounded text-xs text-white">新建</button>
               </div>
             </div>
             
@@ -285,7 +396,7 @@ export default function App() {
                         <span className="text-zinc-600">|</span>
                         <span onClick={() => handleViewHistory(task)} className="cursor-pointer hover:underline text-purple-400">日志</span>
                         <span className="text-zinc-600">|</span>
-                        <span onClick={() => { setEditTask(task); setShowModal(true); }} className="cursor-pointer hover:underline">编辑</span>
+                        <span onClick={() => openTaskModal(task)} className="cursor-pointer hover:underline">编辑</span>
                         <span className="text-zinc-600">|</span>
                         <span onClick={() => handleDeleteTask(task.id)} className="cursor-pointer hover:underline text-red-400">删除</span>
                       </td>
@@ -314,20 +425,73 @@ export default function App() {
 
       {showModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-[#1c1e26] border border-[#2d303a] rounded-lg shadow-xl w-full max-w-md p-5 text-sm">
+          <div className="bg-[#1c1e26] border border-[#2d303a] rounded-lg shadow-xl w-full max-w-lg md:max-w-xl p-5 text-sm max-h-[90vh] overflow-y-auto">
             <h3 className="text-white font-semibold mb-4">{editTask ? '编辑任务' : '新建定时任务'}</h3>
             <form onSubmit={handleSaveTask} className="space-y-4">
               <div>
                 <label className="block text-zinc-400 mb-1">任务名称</label>
                 <input required name="name" defaultValue={editTask?.name} className="w-full bg-[#0f1115] border border-[#2d303a] rounded px-3 py-2 text-white outline-none focus:border-blue-500" />
               </div>
+              
               <div>
-                <label className="block text-zinc-400 mb-1">Cron表达式 <span className="text-[10px]">(例如: */5 * * * *)</span></label>
-                <input required name="cron" defaultValue={editTask?.cron} className="w-full bg-[#0f1115] border border-[#2d303a] rounded px-3 py-2 text-white outline-none focus:border-blue-500" />
+                <div className="flex justify-between items-center mb-1.5">
+                  <label className="block text-zinc-400">运行计划配置 (Cron)</label>
+                  <div className="flex bg-[#0f1115] border border-[#2d303a] p-0.5 rounded gap-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setCronMode('visual')}
+                      className={`px-2 py-0.5 rounded text-[11px] font-medium transition ${cronMode === 'visual' ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}
+                    >
+                      可视化配置
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCronMode('raw')}
+                      className={`px-2 py-0.5 rounded text-[11px] font-medium transition ${cronMode === 'raw' ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}
+                    >
+                      原始表达式
+                    </button>
+                  </div>
+                </div>
+
+                {cronMode === 'visual' ? (
+                  <div className="space-y-2">
+                    <CronGenerator initialValue={cronValue} onChange={(val) => setCronValue(val)} />
+                    <div className="flex items-center gap-1.5 bg-[#15171e] px-2.5 py-1.5 rounded border border-[#2d303a] text-xs font-mono text-zinc-400">
+                      <span>生成的 Cron 表达式:</span>
+                      <span className="text-blue-400 font-bold">{cronValue}</span>
+                    </div>
+                    <input type="hidden" name="cron" value={cronValue} />
+                  </div>
+                ) : (
+                  <div>
+                    <input
+                      required
+                      name="cron"
+                      value={cronValue}
+                      onChange={(e) => setCronValue(e.target.value)}
+                      placeholder="例如: */5 * * * *"
+                      className="w-full bg-[#0f1115] border border-[#2d303a] rounded px-3 py-2 text-white outline-none focus:border-blue-500 font-mono text-sm"
+                    />
+                    <p className="text-[10px] text-zinc-500 mt-1">格式: [分] [时] [日] [月] [周]</p>
+                  </div>
+                )}
               </div>
+
               <div>
                 <label className="block text-zinc-400 mb-1">执行脚本/命令</label>
-                <input required name="script" defaultValue={editTask?.script} placeholder="python main.py / sh script.sh" className="w-full bg-[#0f1115] border border-[#2d303a] rounded px-3 py-2 text-white outline-none focus:border-blue-500" />
+                <input required name="script" defaultValue={editTask?.script} placeholder="python main.py / sh script.sh" className="w-full bg-[#0f1115] border border-[#2d303a] rounded px-3 py-2 text-white outline-none focus:border-blue-500 font-mono text-sm" />
+              </div>
+              <div>
+                <label className="block text-zinc-400 mb-1">脚本运行目录 (CWD)</label>
+                <input name="cwd" defaultValue={editTask?.cwd || ''} placeholder="如 C:\my_project 或 D:\workspace\app (留空表示当前应用根目录)" className="w-full bg-[#0f1115] border border-[#2d303a] rounded px-3 py-2 text-white outline-none focus:border-blue-500 text-sm" />
+              </div>
+              <div>
+                <label className="block text-zinc-400 mb-1">局部自定义环境变量</label>
+                <textarea name="envVars" defaultValue={editTask?.envVars || ''} rows={3} placeholder="每行一个 KEY=VALUE&#10;例如:&#10;PATH=C:\Python39;C:\Python39\Scripts;$PATH&#10;MY_SYS_KEY=some_value" className="w-full bg-[#0f1115] border border-[#2d303a] rounded px-3 py-2 text-white outline-none focus:border-blue-500 font-mono text-xs placeholder:text-zinc-600" />
+                <p className="text-[10px] text-zinc-500 mt-1">
+                  在此处通过设置 <code className="text-zinc-300 font-mono">PATH=特定路径;$PATH</code> 即可让当前脚本使用特定 Python 版本、Git 路径等。
+                </p>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>

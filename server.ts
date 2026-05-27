@@ -140,7 +140,29 @@ async function executeTask(task, retryAttempt = 0) {
     
     if (pathsToAdd.length > 0) {
         const separator = os.platform() === 'win32' ? ';' : ':';
-        customEnvironment.PATH = pathsToAdd.join(separator) + separator + process.env.PATH;
+        customEnvironment.PATH = pathsToAdd.join(separator) + separator + (process.env.PATH || '');
+    }
+
+    // Apply task-specific environment variables
+    if (task.envVars && typeof task.envVars === 'string') {
+        const lines = task.envVars.split(/\r?\n/);
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith('#')) continue; // Skip empty lines and comments
+            const equalIdx = trimmed.indexOf('=');
+            if (equalIdx > 0) {
+                const key = trimmed.substring(0, equalIdx).trim();
+                let val = trimmed.substring(equalIdx + 1).trim();
+                
+                // Allow appending to PATH via $PATH or %PATH% placeholder
+                if (key.toUpperCase() === 'PATH') {
+                    const originalPath = customEnvironment.PATH || process.env.PATH || '';
+                    val = val.replace('$PATH', originalPath).replace('%PATH%', originalPath);
+                }
+                
+                customEnvironment[key] = val;
+            }
+        }
     }
 
     // Force Python and other tools to output matching the selected encoding
@@ -154,8 +176,21 @@ async function executeTask(task, retryAttempt = 0) {
 
     const timeoutMs = (task.timeout ? parseInt(task.timeout) : 0) * 1000;
 
+    const execOptions: any = {
+        shell: true,
+        encoding: 'buffer',
+        env: customEnvironment,
+        timeout: timeoutMs,
+        windowsHide: true
+    };
+
+    if (task.cwd && typeof task.cwd === 'string' && task.cwd.trim()) {
+        execOptions.cwd = task.cwd.trim();
+        addLog(task.id, `Set execution working directory (CWD): ${execOptions.cwd}`, 'info');
+    }
+
     // Windows cmd defaults to GBK/CP936, returning raw buffer allows us to decode safely.
-    exec(task.script, { shell: true, encoding: 'buffer', env: customEnvironment, timeout: timeoutMs }, (error, stdoutBuffer, stderrBuffer) => {
+    exec(task.script, execOptions, (error, stdoutBuffer, stderrBuffer) => {
         let stdoutStr = '';
         let stderrStr = '';
         
@@ -303,13 +338,54 @@ async function startServer() {
                 enabled: req.body.enabled !== false,
                 lastRun: '--',
                 timeout: req.body.timeout !== undefined ? req.body.timeout : 0,
-                retryCount: req.body.retryCount !== undefined ? req.body.retryCount : 1
+                retryCount: req.body.retryCount !== undefined ? req.body.retryCount : 1,
+                cwd: req.body.cwd !== undefined ? req.body.cwd : '',
+                envVars: req.body.envVars !== undefined ? req.body.envVars : ''
             };
             tasks.push(newTask);
             await saveTasks(tasks);
             scheduleTask(newTask);
             res.json(newTask);
         } catch (error) {
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    app.post('/api/tasks/import', async (req, res) => {
+        try {
+            const imported = req.body;
+            if (!Array.isArray(imported)) {
+                return res.status(400).json({ error: '数据格式不正确，应该为数组。' });
+            }
+            const currentTasks = await getTasks();
+            const newTasks = [];
+            for (const item of imported) {
+                const newId = Date.now() + Math.floor(Math.random() * 1000000);
+                const newTask = {
+                    id: newId,
+                    status: item.enabled !== false ? 'IDLE' : 'DISABLED',
+                    name: item.name || '导入的任务',
+                    cron: item.cron || '*/5 * * * *',
+                    script: item.script || 'echo "hello"',
+                    type: item.type || 'shell',
+                    enabled: item.enabled !== false,
+                    lastRun: item.lastRun || '--',
+                    timeout: item.timeout !== undefined ? parseInt(item.timeout) : 0,
+                    retryCount: item.retryCount !== undefined ? parseInt(item.retryCount) : 1,
+                    cwd: item.cwd !== undefined ? item.cwd : '',
+                    envVars: item.envVars !== undefined ? item.envVars : ''
+                };
+                currentTasks.push(newTask);
+                newTasks.push(newTask);
+            }
+            await saveTasks(currentTasks);
+            for (const t of newTasks) {
+                if (t.enabled) {
+                    scheduleTask(t);
+                }
+            }
+            res.json({ success: true, count: imported.length, tasks: newTasks });
+        } catch (error: any) {
             res.status(500).json({ error: error.message });
         }
     });
